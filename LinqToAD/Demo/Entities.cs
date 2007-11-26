@@ -21,77 +21,29 @@ namespace Demo
     [DirectorySchema("user", typeof(IADsUser))]
     class User
     {
-        private string name;
+        public string Name { get; set; }
 
-        public string Name
-        {
-            get { return name; }
-            set { name = value; }
-        }
+        public string Description { get; set; }
 
-        private string description;
-
-        public string Description
-        {
-            get { return description; }
-            set { description = value; }
-        }
-
-        private int logonCount;
-
-        public int LogonCount
-        {
-            get { return logonCount; }
-            set { logonCount = value; }
-        }
-
-        private DateTime pwdLastSet;
+        public int LogonCount { get; set; }
 
         [DirectoryAttribute("PasswordLastChanged", DirectoryAttributeType.ActiveDs)]
-        public DateTime PasswordLastSet
-        {
-            get { return pwdLastSet; }
-            set { pwdLastSet = value; }
-        }
-
-        private string distinguishedName;
+        public DateTime PasswordLastSet { get; set; }
 
         [DirectoryAttribute("distinguishedName")]
-        public string Dn
-        {
-            get { return distinguishedName; }
-            set { distinguishedName = value; }
-        }
-
-        private string[] memberOf;
+        public string Dn { get; set; }
 
         [DirectoryAttribute("memberOf")]
-        public string[] Groups
-        {
-            get { return memberOf; }
-            set { memberOf = value; }
-        }
+        public string[] Groups { get; set; }
     }
 
     [DirectorySchema("group")]
     class Group
     {
-        private string name;
-
-        public string Name
-        {
-            get { return name; }
-            set { name = value; }
-        }
-
-        private string[] members;
+        public string Name { get; set; }
 
         [DirectoryAttribute("member")]
-        public string[] Members
-        {
-            get { return members; }
-            set { members = value; }
-        }
+        public string[] Members { get; set; }
     }
 
     [DirectorySchema("user", typeof(IADsUser))]
@@ -112,7 +64,7 @@ namespace Demo
                 }
             }
         }
-	
+
         private string first;
 
         [DirectoryAttribute("givenName")]
