@@ -20,6 +20,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text;
+using System.Globalization;
 
 #endregion
 
@@ -68,6 +69,7 @@ namespace BdsSoft.DirectoryServices.Linq
     /// Represents an LDAP data source. Allows for querying the LDAP data source via LINQ.
     /// </summary>
     /// <typeparam name="T">Entity type in the underlying source.</typeparam>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1710:IdentifiersShouldHaveCorrectSuffix")]
     public class DirectorySource<T> : IQueryable<T>, IDirectorySource
     {
         #region Private members
@@ -179,7 +181,7 @@ namespace BdsSoft.DirectoryServices.Linq
                         DirectoryAttributeAttribute[] da = i.GetCustomAttributes(typeof(DirectoryAttributeAttribute), false) as DirectoryAttributeAttribute[];
                         if (da != null && da.Length != 0 && da[0] != null)
                         {
-                            if (da[0].Type == DirectoryAttributeType.ActiveDs)
+                            if (da[0].QuerySource == DirectoryAttributeType.ActiveDs)
                             {
                                 if (attr != null && attr.Length != 0)
                                     attr[0].ActiveDsHelperType.GetProperty(da[0].Attribute).SetValue(entry.NativeObject, i.GetValue(e.Key, null), null);
@@ -232,6 +234,7 @@ namespace BdsSoft.DirectoryServices.Linq
         /// <param name="expression">Expression representing the LDAP query.</param>
         /// <typeparam name="TElement">The type of the elements of the IQueryable that is returned.</typeparam>
         /// <returns>IQueryable object that can evaluate the query represented by the specified expression tree.</returns>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1004:GenericMethodsShouldProvideTypeParameter")]
         public IQueryable<TElement> CreateQuery<TElement>(Expression expression)
         {
             return new DirectoryQuery<TElement>(expression);
@@ -241,6 +244,7 @@ namespace BdsSoft.DirectoryServices.Linq
 
         #region Direct execution (not implemented)
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1004:GenericMethodsShouldProvideTypeParameter")]
         public TResult Execute<TResult>(Expression expression)
         {
             throw new NotImplementedException();
@@ -258,6 +262,7 @@ namespace BdsSoft.DirectoryServices.Linq
     /// Represents a query in Directory Services.
     /// </summary>
     /// <typeparam name="T">Type of the objects returned by this query upon execution.</typeparam>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1710:IdentifiersShouldHaveCorrectSuffix")]
     public class DirectoryQuery<T> : IQueryable<T>
     {
         #region Private members
@@ -402,7 +407,7 @@ namespace BdsSoft.DirectoryServices.Linq
             DirectoryAttributeAttribute[] da = i.GetCustomAttributes(typeof(DirectoryAttributeAttribute), false) as DirectoryAttributeAttribute[];
             if (da != null && da.Length != 0)
             {
-                if (da[0].Type == DirectoryAttributeType.ActiveDs)
+                if (da[0].QuerySource == DirectoryAttributeType.ActiveDs)
                 {
                     PropertyInfo p = helper.GetProperty(da[0].Attribute, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
                     try
@@ -538,6 +543,7 @@ namespace BdsSoft.DirectoryServices.Linq
         /// Recursive helper method to finds all required properties for projection.
         /// </summary>
         /// <param name="e">Expression to detect property uses for.</param>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1502:AvoidExcessiveComplexity")]
         private void FindProperties(Expression e)
         {
             //
@@ -551,7 +557,7 @@ namespace BdsSoft.DirectoryServices.Linq
                     DirectoryAttributeAttribute[] da = me.Member.GetCustomAttributes(typeof(DirectoryAttributeAttribute), false) as DirectoryAttributeAttribute[];
                     if (da != null && da.Length != 0)
                     {
-                        if (da[0].Type != DirectoryAttributeType.ActiveDs)
+                        if (da[0].QuerySource != DirectoryAttributeType.ActiveDs)
                             properties.Add(me.Member.Name);
                     }
                     else
@@ -560,75 +566,76 @@ namespace BdsSoft.DirectoryServices.Linq
             }
             else
             {
-                if (e is BinaryExpression)
+                BinaryExpression b;
+                UnaryExpression u;
+                ConditionalExpression c;
+                InvocationExpression i;
+                LambdaExpression l;
+                ListInitExpression li;
+                MemberInitExpression mi;
+                MethodCallExpression mc;
+                NewExpression n;
+                NewArrayExpression na;
+                TypeBinaryExpression tb;
+
+                if ((b = e as BinaryExpression) != null)
                 {
-                    BinaryExpression b = e as BinaryExpression;
                     FindProperties(b.Left);
                     FindProperties(b.Right);
                 }
-                else if (e is UnaryExpression)
+                else if ((u = e as UnaryExpression) != null)
                 {
-                    UnaryExpression u = e as UnaryExpression;
                     FindProperties(u.Operand);
                 }
-                else if (e is ConditionalExpression)
+                else if ((c = e as ConditionalExpression) != null)
                 {
-                    ConditionalExpression c = e as ConditionalExpression;
                     FindProperties(c.IfFalse);
                     FindProperties(c.IfTrue);
                     FindProperties(c.Test);
                 }
-                else if (e is InvocationExpression)
+                else if ((i = e as InvocationExpression) != null)
                 {
-                    InvocationExpression i = e as InvocationExpression;
                     FindProperties(i.Expression);
                     foreach (Expression ex in i.Arguments)
                         FindProperties(ex);
                 }
-                else if (e is LambdaExpression)
+                else if ((l = e as LambdaExpression) != null)
                 {
-                    LambdaExpression l = e as LambdaExpression;
                     FindProperties(l.Body);
                     foreach (Expression ex in l.Parameters)
                         FindProperties(ex);
                 }
-                else if (e is ListInitExpression)
+                else if ((li = e as ListInitExpression) != null)
                 {
-                    ListInitExpression li = e as ListInitExpression;
                     FindProperties(li.NewExpression);
                     foreach (ElementInit init in li.Initializers)
                         foreach (Expression ex in init.Arguments)
                             FindProperties(ex);
                 }
-                else if (e is MemberInitExpression)
+                else if ((mi = e as MemberInitExpression) != null)
                 {
-                    MemberInitExpression mi = e as MemberInitExpression;
                     FindProperties(mi.NewExpression);
-                    foreach (MemberAssignment b in mi.Bindings)
-                        FindProperties(b.Expression);
+                    foreach (MemberAssignment ma in mi.Bindings)
+                        FindProperties(ma.Expression);
                 }
-                else if (e is MethodCallExpression)
+                else if ((mc = e as MethodCallExpression) != null)
                 {
-                    MethodCallExpression mc = e as MethodCallExpression;
                     FindProperties(mc.Object);
                     foreach (Expression ex in mc.Arguments)
                         FindProperties(ex);
                 }
-                else if (e is NewExpression)
+                else if ((n = e as NewExpression) != null)
                 {
-                    NewExpression n = e as NewExpression;
                     foreach (Expression ex in n.Arguments)
                         FindProperties(ex);
                 }
-                else if (e is NewArrayExpression)
+                else if ((na = e as NewArrayExpression) != null)
                 {
-                    NewArrayExpression na = e as NewArrayExpression;
                     foreach (Expression ex in na.Expressions)
                         FindProperties(ex);
                 }
-                else if (e is TypeBinaryExpression)
+                else if ((tb = e as TypeBinaryExpression) != null)
                 {
-                    TypeBinaryExpression tb = e as TypeBinaryExpression;
                     FindProperties(tb.Expression);
                 }
             }
@@ -661,50 +668,51 @@ namespace BdsSoft.DirectoryServices.Linq
         /// <param name="sb">Accummulative query string used in recursion.</param>
         private void ParsePredicate(Expression e, StringBuilder sb)
         {
+            BinaryExpression b;
+            UnaryExpression u;
+            MethodCallExpression m;
+
             sb.Append("(");
             //
             // Support for boolean operators & and |. Support for "raw" conditions (like equality).
             //
-            if (e is BinaryExpression)
+            if ((b = e as BinaryExpression) != null)
             {
-                BinaryExpression c = e as BinaryExpression;
-                switch (c.NodeType)
+                switch (b.NodeType)
                 {
                     case ExpressionType.AndAlso:
                         sb.Append("&");
-                        ParsePredicate(c.Left, sb);
-                        ParsePredicate(c.Right, sb);
+                        ParsePredicate(b.Left, sb);
+                        ParsePredicate(b.Right, sb);
                         break;
                     case ExpressionType.OrElse:
                         sb.Append("|");
-                        ParsePredicate(c.Left, sb);
-                        ParsePredicate(c.Right, sb);
+                        ParsePredicate(b.Left, sb);
+                        ParsePredicate(b.Right, sb);
                         break;
                     default: //E.g. Equal, NotEqual, GreaterThan
-                        sb.Append(GetCondition(c));
+                        sb.Append(GetCondition(b));
                         break;
                 }
             }
             //
             // Support for boolean negation.
             //
-            else if (e is UnaryExpression)
+            else if ((u = e as UnaryExpression) != null)
             {
-                UnaryExpression c = e as UnaryExpression;
-                if (c.NodeType == ExpressionType.Not)
+                if (u.NodeType == ExpressionType.Not)
                 {
                     sb.Append("!");
-                    ParsePredicate(c.Operand, sb);
+                    ParsePredicate(u.Operand, sb);
                 }
                 else
-                    throw new NotSupportedException("Unsupported query operator detected: " + c.NodeType);
+                    throw new NotSupportedException("Unsupported query operator detected: " + u.NodeType);
             }
             //
             // Support for string operations.
             //
-            else if (e is MethodCallExpression)
+            else if ((m = e as MethodCallExpression) != null)
             {
-                MethodCallExpression m = e as MethodCallExpression;
                 MemberExpression o = (m.Object as MemberExpression);
                 if (m.Method.DeclaringType == typeof(string))
                 {
@@ -782,29 +790,29 @@ namespace BdsSoft.DirectoryServices.Linq
             switch (e.NodeType)
             {
                 case ExpressionType.Equal:
-                    return String.Format("{0}={1}", attrib, val);
+                    return String.Format(CultureInfo.InvariantCulture, "{0}={1}", attrib, val);
                 case ExpressionType.NotEqual:
-                    return String.Format("!({0}={1})", attrib, val);
+                    return String.Format(CultureInfo.InvariantCulture, "!({0}={1})", attrib, val);
                 case ExpressionType.GreaterThanOrEqual:
                     if (!neg)
-                        return String.Format("{0}>={1}", attrib, val);
+                        return String.Format(CultureInfo.InvariantCulture, "{0}>={1}", attrib, val);
                     else
-                        return String.Format("{0}<={1}", attrib, val);
+                        return String.Format(CultureInfo.InvariantCulture, "{0}<={1}", attrib, val);
                 case ExpressionType.GreaterThan:
                     if (!neg)
-                        return String.Format("&({0}>={1})(!({0}={1}))", attrib, val);
+                        return String.Format(CultureInfo.InvariantCulture, "&({0}>={1})(!({0}={1}))", attrib, val);
                     else
-                        return String.Format("&({0}<={1})(!({0}={1}))", attrib, val);
+                        return String.Format(CultureInfo.InvariantCulture, "&({0}<={1})(!({0}={1}))", attrib, val);
                 case ExpressionType.LessThanOrEqual:
                     if (!neg)
-                        return String.Format("{0}<={1}", attrib, val);
+                        return String.Format(CultureInfo.InvariantCulture, "{0}<={1}", attrib, val);
                     else
-                        return String.Format("{0}>={1}", attrib, val);
+                        return String.Format(CultureInfo.InvariantCulture, "{0}>={1}", attrib, val);
                 case ExpressionType.LessThan:
                     if (!neg)
-                        return String.Format("&({0}<={1})(!({0}={1}))", attrib, val);
+                        return String.Format(CultureInfo.InvariantCulture, "&({0}<={1})(!({0}={1}))", attrib, val);
                     else
-                        return String.Format("&({0}>={1})(!({0}={1}))", attrib, val);
+                        return String.Format(CultureInfo.InvariantCulture, "&({0}>={1})(!({0}={1}))", attrib, val);
                 default:
                     throw new NotSupportedException("Unsupported filtering operator detected: " + e.NodeType);
             }
@@ -815,12 +823,12 @@ namespace BdsSoft.DirectoryServices.Linq
         /// </summary>
         /// <param name="member">Entity type member.</param>
         /// <returns>Mapped field name. If no mapping is applied to the specified member, the member's name will be returned (default mapping).</returns>
-        private string GetFieldName(MemberInfo member)
+        private static string GetFieldName(MemberInfo member)
         {
             DirectoryAttributeAttribute[] da = member.GetCustomAttributes(typeof(DirectoryAttributeAttribute), false) as DirectoryAttributeAttribute[];
             if (da != null && da.Length != 0 && da[0] != null)
             {
-                if (da[0].Type == DirectoryAttributeType.ActiveDs)
+                if (da[0].QuerySource == DirectoryAttributeType.ActiveDs)
                     throw new InvalidOperationException("Can't execute query filters for ADSI properties.");
                 else
                     return da[0].Attribute;

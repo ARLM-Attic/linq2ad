@@ -19,8 +19,8 @@ namespace BdsSoft.DirectoryServices.Linq
     /// <summary>
     /// Specifies the directory schema to query.
     /// </summary>
-    [AttributeUsage(AttributeTargets.Class, AllowMultiple = false)]
-    public class DirectorySchemaAttribute : Attribute
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1019:DefineAccessorsForAttributeArguments"), AttributeUsage(AttributeTargets.Class, AllowMultiple = false)]
+    public sealed class DirectorySchemaAttribute : Attribute
     {
         #region Constructors
 
@@ -38,6 +38,7 @@ namespace BdsSoft.DirectoryServices.Linq
         /// </summary>
         /// <param name="schema">Name of the schema to query for.</param>
         /// <param name="activeDsHelperType">Helper type for Active DS object properties.</param>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "Ds")]
         public DirectorySchemaAttribute(string schema, Type activeDsHelperType)
         {
             Schema = schema;
@@ -51,11 +52,12 @@ namespace BdsSoft.DirectoryServices.Linq
         /// <summary>
         /// Name of the schema to query for.
         /// </summary>
-        public string Schema { get; set; }
+        public string Schema { get; private set; }
 
         /// <summary>
         /// Helper type for Active DS object properties.
         /// </summary>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "Ds")]
         public Type ActiveDsHelperType { get; set; }
 
         #endregion
@@ -64,8 +66,8 @@ namespace BdsSoft.DirectoryServices.Linq
     /// <summary>
     /// Specifies the underlying attribute to query for in the directory.
     /// </summary>
-    [AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
-    public class DirectoryAttributeAttribute : Attribute
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1019:DefineAccessorsForAttributeArguments"), AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
+    public sealed class DirectoryAttributeAttribute : Attribute
     {
         #region Constructors
 
@@ -76,18 +78,18 @@ namespace BdsSoft.DirectoryServices.Linq
         public DirectoryAttributeAttribute(string attribute)
         {
             Attribute = attribute;
-            Type = DirectoryAttributeType.Ldap;
+            QuerySource = DirectoryAttributeType.Ldap;
         }
 
         /// <summary>
         /// Creates a new attribute binding attribute for a entity class field or property.
         /// </summary>
         /// <param name="attribute">Name of the attribute to query for.</param>
-        /// <param name="type">Type of the underlying query source to get the attribute from.</param>
-        public DirectoryAttributeAttribute(string attribute, DirectoryAttributeType type)
+        /// <param name="querySource">Type of the underlying query source to get the attribute from.</param>
+        public DirectoryAttributeAttribute(string attribute, DirectoryAttributeType querySource)
         {
             Attribute = attribute;
-            Type = type;
+            QuerySource = querySource;
         }
 
         #endregion
@@ -97,12 +99,12 @@ namespace BdsSoft.DirectoryServices.Linq
         /// <summary>
         /// Name of the attribute to query for.
         /// </summary>
-        public string Attribute { get; set; }
+        public string Attribute { get; private set; }
 
         /// <summary>
         /// Type of the underlying query source to get the attribute from.
         /// </summary>
-        public DirectoryAttributeType Type { get; set; }
+        public DirectoryAttributeType QuerySource { get; set; }
 
         #endregion
     }
@@ -120,6 +122,7 @@ namespace BdsSoft.DirectoryServices.Linq
         /// <summary>
         /// Uses Active DS Helper IADs* objects to get data from.
         /// </summary>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1709:IdentifiersShouldBeCasedCorrectly", MessageId = "Ds")]
         ActiveDs
     }
 }
