@@ -529,8 +529,30 @@ namespace BdsSoft.DirectoryServices.Linq
             //
             MemberInitExpression mi = p.Body as MemberInitExpression;
             if (mi != null)
-                foreach (MemberAssignment b in mi.Bindings)
-                    FindProperties(b.Expression);
+            {
+                Queue<MemberBinding> bindings = new Queue<MemberBinding>();
+                foreach (MemberBinding b in mi.Bindings)
+                    bindings.Enqueue(b);
+
+                while (bindings.Count > 0)
+                {
+                    MemberBinding b = bindings.Dequeue();
+
+                    MemberAssignment ma;
+                    MemberMemberBinding mmb;
+                    MemberListBinding mlb;
+
+                    if ((ma = b as MemberAssignment) != null)
+                        FindProperties(ma.Expression);
+                    else if ((mmb = b as MemberMemberBinding) != null)
+                        foreach (MemberBinding mb in mmb.Bindings)
+                            bindings.Enqueue(mb);
+                    else if ((mlb = b as MemberListBinding) != null)
+                        foreach (ElementInit ie in mlb.Initializers)
+                            foreach (Expression arg in ie.Arguments)
+                                FindProperties(arg);
+                }
+            }
             //
             // Support for identity projections (e.g. user => user), getting all properties back.
             //
