@@ -12,6 +12,8 @@
  * Running the demo:
  * - Set up an Active Directory domain *test* environment.
  * - Change the Program.ROOT static variable with the proper LDAP path and authentication information.
+ * - When using hierarchical data contexts, make sure there's a root-level OU called Demo.
+ *   #define NOTESTOU if you want to disable the hierarchical data context support.
  */
 
 #region Namespace imports
@@ -31,28 +33,26 @@ namespace Demo
 
         static void Main(string[] args)
         {
-            var users = new DirectorySource<User>(ROOT, SearchScope.Subtree);
-            users.Log = Console.Out;
-            var groups = new DirectorySource<Group>(ROOT, SearchScope.Subtree);
-            groups.Log = Console.Out;
-
+            MyContext ctx = new MyContext(ROOT);
+            ctx.Log = Console.Out;
+            
             //
             // Simple query with all-property projection (usr => usr).
             // I.e. users.Select(usr => usr);
             //
-            var res1 = from usr in users
+            var res1 = from usr in ctx.Users
                        select usr;
 
             Console.WriteLine("QUERY 1\n=======");
             foreach (var w in res1)
-                Console.WriteLine("{0}: {1} {2}", w.Name, w.Description, w.PasswordLastSet);
+                Console.WriteLine("{0} [{1}]: {2} {3}", w.Name, w.Id, w.Description, w.PasswordLastSet);
             Console.WriteLine();
 
             //
             // Query with selection criterion.
             // I.e. users.Where(usr => usr.Name == "A*").Select(usr => usr);
             //
-            var res2 = from usr in users
+            var res2 = from usr in ctx.Users
                        where usr.Name == "A*"
                        select usr;
 
@@ -68,7 +68,7 @@ namespace Demo
             //                  && usr.Description.Contains("Built-in"))
             //           .Select(usr => new { usr.Name, usr.Description, usr.Groups });
             //
-            var res3 = from usr in users
+            var res3 = from usr in ctx.Users
                        where usr.Name == GetQueryStartWith("A") && usr.Description.Contains("Built-in")
                        select new { usr.Name, usr.Description, usr.Groups, usr.LogonCount };
 
@@ -89,7 +89,7 @@ namespace Demo
             //           .Select(usr => new { usr.Name, usr.Description, usr.Dn, usr.PasswordLastSet,
             //                                Stats = new { usr.PasswordLastSet, usr.LogonCount, TwiceLogonCount = usr.LogonCount * 2 } });
             //
-            var res4 = from usr in users
+            var res4 = from usr in ctx.Users
                        where (usr.Name.StartsWith("A") && usr.Name.EndsWith("strator")) || usr.Name == "Guest"
                        select new { usr.Name, usr.Description, usr.Dn, Stats = new { usr.PasswordLastSet, usr.LogonCount, TwiceLogonCount = usr.LogonCount * 2 } };
 
@@ -102,7 +102,7 @@ namespace Demo
             // Query with sorting (not supported currently).
             // I.e. users.OrderBy(usr => usr.Name).Select(usr => usr);
             //
-            var res5 = (from usr in users
+            var res5 = (from usr in ctx.Users
                        //orderby usr.Name ascending //not supported in LDAP; alternative in-memory sort
                        select usr).AsEnumerable().OrderBy(usr => usr.Name);
 
@@ -115,8 +115,9 @@ namespace Demo
             // Query against groups in AD.
             // I.e. groups.Where(grp => grp.Name.EndsWith("ators")).Select(grp => new { grp.Name, MemberCount = grp.Members.Length });
             //
-            var res6 = from grp in groups
-                       where grp.Name.EndsWith("ators")
+            string endsWith = "ators";
+            var res6 = from grp in ctx.Groups
+                       where grp.Name.EndsWith(endsWith)
                        select new { grp.Name, MemberCount = grp.Members.Length };
 
             Console.WriteLine("QUERY 6\n=======");
@@ -124,8 +125,13 @@ namespace Demo
                 Console.WriteLine("{0} has {1} members", w.Name, w.MemberCount);
             Console.WriteLine();
 
-            var myusers = new DirectorySource<MyUser>(ROOT.Children.Find("OU=Demo"), SearchScope.Subtree);
-            myusers.Log = Console.Out;
+#if !NOTESTOU
+            //
+            // Refresh 1.0.1 functionality allows to created directory contexts with nesting.
+            // To illustrate this, myusers is replaced by ctx.Demo.Users.
+            //
+            //var myusers = new DirectorySource<MyUser>(ROOT.Children.Find("OU=Demo"), SearchScope.Subtree);
+            //myusers.Log = Console.Out;
 
             //
             // Query with update functionality using an entity MyUser : DirectoryEntity.
@@ -133,7 +139,7 @@ namespace Demo
             string oldOffice = "Test";
             string newOffice = "Demo";
 
-            var res7 = from usr in myusers
+            var res7 = from usr in ctx.Demo.Users
                        where usr.Office == oldOffice
                        select usr;
 
@@ -146,7 +152,7 @@ namespace Demo
             Console.WriteLine();
 
             Console.WriteLine("Moving people to new office {0}...\n", newOffice);
-            myusers.Update();
+            ctx.Demo.Update();
 
             int k = 0;
             foreach (var u in res7) //should be empty now
@@ -155,7 +161,7 @@ namespace Demo
                 Console.WriteLine("No results returned."); //expected case
             Console.WriteLine();
 
-            var res7bis = from usr in myusers
+            var res7bis = from usr in ctx.Demo.Users
                           where usr.Office == newOffice
                           select usr;
 
@@ -166,12 +172,12 @@ namespace Demo
             }
             Console.WriteLine();
 
-            myusers.Update();
+            ctx.Demo.Update();
 
             //
             // Query with method call functionality using an entity MyUser : DirectoryEntity and a method SetPassword.
             //
-            var res8 = from usr in myusers
+            var res8 = from usr in ctx.Demo.Users
                        select usr;
 
             string newPassword = "Hello W0rld!";
@@ -203,7 +209,8 @@ namespace Demo
             }
             Console.WriteLine();
 
-            myusers.Update();
+            ctx.Demo.Users.Update();
+#endif
         }
 
         static string GetQueryStartWith(string s)

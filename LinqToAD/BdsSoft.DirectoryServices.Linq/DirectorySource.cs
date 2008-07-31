@@ -14,13 +14,14 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.DirectoryServices;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text;
-using System.Globalization;
 
 #endregion
 
@@ -53,6 +54,11 @@ namespace BdsSoft.DirectoryServices.Linq
         /// </summary>
         Type OriginalType { get; }
 
+        /// <summary>
+        /// Searcher used to perform directory searches.
+        /// </summary>
+        DirectorySearcher Searcher { get; }
+
         #endregion
 
         #region Methods
@@ -61,6 +67,11 @@ namespace BdsSoft.DirectoryServices.Linq
         /// Callback method for entity property change tracking.
         /// </summary>
         void UpdateNotification(object sender, PropertyChangedEventArgs e);
+
+        /// <summary>
+        /// Update changes in the underlying data source.
+        /// </summary>
+        void Update();
 
         #endregion
     }
@@ -74,13 +85,19 @@ namespace BdsSoft.DirectoryServices.Linq
     {
         #region Private members
 
-        #region Directory information
+        /// <summary>
+        /// Associated directory context if bound to a context; otherwise null.
+        /// </summary>
+        private DirectoryContext _context;
 
-        private DirectoryEntry searchRoot;
-        private SearchScope searchScope;
+        /// <summary>
+        /// Searcher object to perform the directory search. Captures the search root and options.
+        /// </summary>
+        private DirectorySearcher _searcher;
 
-        #endregion
-
+        /// <summary>
+        /// Logger for diagnostic output.
+        /// </summary>
         private TextWriter logger;
 
         /// <summary>
@@ -99,8 +116,28 @@ namespace BdsSoft.DirectoryServices.Linq
         /// <param name="searchScope">Search scope for all queries performed through this data source.</param>
         public DirectorySource(DirectoryEntry searchRoot, SearchScope searchScope)
         {
-            this.searchRoot = searchRoot;
-            this.searchScope = searchScope;
+            _searcher = new DirectorySearcher(searchRoot) { SearchScope = searchScope };
+        }
+
+        /// <summary>
+        /// Creates a new data source instance based on the given DirectorySearcher.
+        /// </summary>
+        /// <param name="searcher">DirectorySearcher object to use for directory searches.</param>
+        public DirectorySource(DirectorySearcher searcher)
+        {
+            _searcher = searcher;
+        }
+
+        /// <summary>
+        /// Creates a data source from the given context.
+        /// </summary>
+        /// <param name="context">DirectoryContext that embeds the data source.</param>
+        /// <param name="searchScope">Search scope for all queries performed through this data source.</param>
+        internal DirectorySource(DirectoryContext context, SearchScope searchScope)
+        {
+            _context = context;
+            _searcher = Helpers.CloneSearcher(context.Searcher, null, null);
+            _searcher.SearchScope = searchScope;
         }
 
         #endregion
@@ -112,38 +149,78 @@ namespace BdsSoft.DirectoryServices.Linq
         /// </summary>
         public TextWriter Log
         {
-            get { return logger; }
-            set { logger = value; }
+            get
+            {
+                if (logger != null)
+                    return logger;
+
+                // Fall back to parent context if applicable.
+                if (_context != null)
+                    return _context.Log;
+
+                return null;
+            }
+            set
+            {
+                // Can override on the leaf level.
+                logger = value;
+            }
         }
 
+        /// <summary>
+        /// Search root.
+        /// </summary>
         public DirectoryEntry Root
         {
-            get { return searchRoot; }
+            get { return Searcher.SearchRoot; }
         }
 
+        /// <summary>
+        /// Search scope.
+        /// </summary>
         public SearchScope Scope
         {
-            get { return searchScope; }
+            get { return Searcher.SearchScope; }
         }
 
+        /// <summary>
+        /// Entity element type.
+        /// </summary>
         public Type ElementType
         {
             get { return typeof(T); }
         }
 
+        /// <summary>
+        /// Original type of objects being queried.
+        /// </summary>
         public Type OriginalType
         {
             get { return typeof(T); }
         }
 
+        /// <summary>
+        /// Expression representing the data source object.
+        /// </summary>
         public Expression Expression
         {
             get { return Expression.Constant(this); }
         }
 
+        /// <summary>
+        /// LINQ query provider object.
+        /// </summary>
         public IQueryProvider Provider
         {
             get { return new DirectoryQueryProvider(); }
+        }
+
+        /// <summary>
+        /// Directory searcher used for the directory search.
+        /// </summary>
+        public DirectorySearcher Searcher
+        {
+            get { return _searcher; }
         }
 
         #endregion
@@ -349,12 +426,16 @@ namespace BdsSoft.DirectoryServices.Linq
             if (attr == null || attr.Length == 0)
                 throw new InvalidOperationException("Missing schema mapping attribute.");
 
-            DirectoryEntry root = _source.Root;
-            string q = String.Format("(&(objectClass={0}){1})", attr[0].Schema, query);
-            DirectorySearcher s = new DirectorySearcher(root, q, properties.ToArray(), _source.Scope);
+            string classQuery = String.Format("(objectClass={0})", attr[0].Schema);
+
+            DirectorySearcher s = Helpers.CloneSearcher(
+                _source.Searcher,
+                !string.IsNullOrEmpty(query) ? String.Format("(&{0}{1})", classQuery, query) : classQuery,
+                properties.ToArray()
+            );
 
             if (_source.Log != null)
-                _source.Log.WriteLine(q);
+                _source.Log.WriteLine(s.Filter);
 
             Type helper = attr[0].ActiveDsHelperType;
 
@@ -372,7 +453,7 @@ namespace BdsSoft.DirectoryServices.Linq
                 if (project == null)
                 {
                     foreach (PropertyInfo p in typeof(T).GetProperties())
-                        AssignResultProperty(helper, e, result, p.Name);
+                        AssignResultProperty(helper, sr, result, p.Name);
 
                     /// *** UPDATE ***
                     if (entity != null)
@@ -383,7 +464,7 @@ namespace BdsSoft.DirectoryServices.Linq
                 else
                 {
                     foreach (string prop in properties)
-                        AssignResultProperty(helper, e, result, prop);
+                        AssignResultProperty(helper, sr, result, prop);
 
                     /// *** UPDATE ***
                     if (entity != null)
@@ -398,10 +479,10 @@ namespace BdsSoft.DirectoryServices.Linq
         /// Assigns the specified property on the specified object based on the data wrapped in the DirectoryEntry representing the current result.
         /// </summary>
         /// <param name="helper">Active Directory helper type to help retrieving the target value.</param>
-        /// <param name="e">Directory entry containing the data for the current result.</param>
+        /// <param name="searchResult">SearchResult object containing the data for the current result.</param>
         /// <param name="result">Object the property has to be set on.</param>
         /// <param name="prop">Property to be set.</param>
-        private void AssignResultProperty(Type helper, DirectoryEntry e, object result, string prop)
+        private void AssignResultProperty(Type helper, SearchResult searchResult, object result, string prop)
         {
             PropertyInfo i = originalType.GetProperty(prop);
             DirectoryAttributeAttribute[] da = i.GetCustomAttributes(typeof(DirectoryAttributeAttribute), false) as DirectoryAttributeAttribute[];
@@ -412,31 +493,63 @@ namespace BdsSoft.DirectoryServices.Linq
                     PropertyInfo p = helper.GetProperty(da[0].Attribute, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
                     try
                     {
-                        i.SetValue(result, p.GetValue(e.NativeObject, null), null);
+                        i.SetValue(result, p.GetValue(searchResult.GetDirectoryEntry().NativeObject, null), null);
                     }
                     catch (TargetInvocationException) { }
                 }
                 else
                 {
-                    PropertyValueCollection pvc = e.Properties[da[0].Attribute];
+                    DirectoryEntry e = searchResult.GetDirectoryEntry();
+
+                    var resultValue = e.Properties[da[0].Attribute];
                     if (i.PropertyType.IsArray)
                     {
-                        Array o = Array.CreateInstance(i.PropertyType.GetElementType(), pvc.Count);
+                        //
+                        // Byte array properties are special in AD. Here we don't follow the
+                        // heuristic of an array-typed property to be an expanded multi-value
+                        // property but we support splatting the contents of the value into
+                        // the byte[] array.
+                        //
+                        byte[] value = null;
+                        if (i.PropertyType.GetElementType() == typeof(byte) && (value = resultValue[0] as byte[]) != null)
+                        {
+                            i.SetValue(result, value, null);
+                        }
+                        else
+                        {
+                            Array o = Array.CreateInstance(i.PropertyType.GetElementType(), resultValue.Count);
 
-                        int j = 0;
-                        foreach (object oo in pvc)
-                            o.SetValue(oo, j++);
+                            int j = 0;
+                            foreach (object oo in resultValue)
+                                o.SetValue(oo, j++);
 
-                        i.SetValue(result, o, null);
+                            i.SetValue(result, o, null);
+                        }
                     }
                     else
-                        if (pvc.Count == 1)
-                            i.SetValue(result, pvc[0], null);
+                    {
+                        if (resultValue.Count == 1)
+                        {
+                            //
+                            // Support GUID field mapping.
+                            //
+                            if (i.PropertyType == typeof(Guid))
+                            {
+                                byte[] value = resultValue[0] as byte[];
+                                if (value == null)
+                                    throw new NotSupportedException("Mapping of Guid-typed property " + i.Name + " to non-byte[] valued directory field " + da[0].Attribute + ".");
+
+                                i.SetValue(result, new Guid(value), null);
+                            }
+                            else
+                                i.SetValue(result, resultValue[0], null);
+                        }
+                    }
                 }
             }
             else
             {
-                PropertyValueCollection pvc = e.Properties[prop];
+                var pvc = searchResult.GetDirectoryEntry().Properties[prop];
                 if (pvc.Count == 1)
                     i.SetValue(result, pvc[0], null);
             }
@@ -742,20 +855,20 @@ namespace BdsSoft.DirectoryServices.Linq
                     {
                         case "Contains":
                             {
-                                ConstantExpression c = m.Arguments[0] as ConstantExpression;
-                                sb.AppendFormat("{0}=*{1}*", GetFieldName(o.Member), c.Value);
+                                string value = GetStringOperandValue(m);
+                                sb.AppendFormat("{0}=*{1}*", GetFieldName(o.Member), value);
                                 break;
                             }
                         case "StartsWith":
                             {
-                                ConstantExpression c = m.Arguments[0] as ConstantExpression;
-                                sb.AppendFormat("{0}={1}*", GetFieldName(o.Member), c.Value);
+                                string value = GetStringOperandValue(m);
+                                sb.AppendFormat("{0}={1}*", GetFieldName(o.Member), value);
                                 break;
                             }
                         case "EndsWith":
                             {
-                                ConstantExpression c = m.Arguments[0] as ConstantExpression;
-                                sb.AppendFormat("{0}=*{1}", GetFieldName(o.Member), c.Value);
+                                string value = GetStringOperandValue(m);
+                                sb.AppendFormat("{0}=*{1}", GetFieldName(o.Member), value);
                                 break;
                             }
                         default:
@@ -771,7 +884,23 @@ namespace BdsSoft.DirectoryServices.Linq
         }
 
         /// <summary>
-        /// Helper expression to translate conditions to LDAP filters.
+        /// Helper method to get the first string-valued parameter of a method call expression.
+        /// </summary>
+        /// <param name="m">Method call expression to get the string-valued parameter from.</param>
+        /// <returns>First parameter string value.</returns>
+        private static string GetStringOperandValue(MethodCallExpression m)
+        {
+            Debug.Assert(m.Arguments.Count == 1);
+
+            string value = Expression.Lambda(m.Arguments[0]).Compile().DynamicInvoke() as string;
+            if (value == null)
+                throw new NotSupportedException(m.Method.Name + " can only be used with string operands.");
+
+            return value;
+        }
+
+        /// <summary>
+        /// Helper method to translate conditions to LDAP filters.
         /// </summary>
         /// <param name="e">Conditional expression to be translated to an LDAP filter.</param>
         /// <returns>String representing the condition in LDAP.</returns>
@@ -864,5 +993,239 @@ namespace BdsSoft.DirectoryServices.Linq
         #endregion
 
         #endregion
+    }
+
+    /// <summary>
+    /// Extension methods for System.DirectoryServices classes.
+    /// </summary>
+    public static class DirectoryExtensions
+    {
+        /// <summary>
+        /// Lifts a DirectorySearcher object into a queryable DirectorySource for a given entity type.
+        /// </summary>
+        /// <typeparam name="T">Entity type.</typeparam>
+        /// <param name="searcher">DirectorySearcher to base the query on.</param>
+        /// <returns>Queryable DirectorySource.</returns>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1004:GenericMethodsShouldProvideTypeParameter")]
+        public static DirectorySource<T> AsQueryable<T>(this DirectorySearcher searcher)
+        {
+            return new DirectorySource<T>(searcher);
+        }
+
+        /// <summary>
+        /// Lifts a DirectoryEntry object into a queryable DirectorySource for a given entity type.
+        /// </summary>
+        /// <typeparam name="T">Entity type.</typeparam>
+        /// <param name="entry">DirectoryEntry to start the query from.</param>
+        /// <param name="scope">Scope for the query.</param>
+        /// <returns>Queryable DirectorySource.</returns>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1004:GenericMethodsShouldProvideTypeParameter")]
+        public static DirectorySource<T> AsQueryable<T>(this DirectoryEntry entry, SearchScope scope)
+        {
+            return new DirectorySource<T>(entry, scope);
+        }
+    }
+
+    /// <summary>
+    /// Provides context-based provider support.
+    /// </summary>
+    public class DirectoryContext : IDisposable
+    {
+        #region Private members
+
+        private DirectorySearcher _searcher;
+
+        #endregion
+
+        #region Constructors
+
+        /// <summary>
+        /// Creates a new data source instance for the given directory search root and with a given search scope.
+        /// </summary>
+        /// <param name="searchRoot">Root location in the directory to start all searches from.</param>
+        public DirectoryContext(DirectoryEntry searchRoot)
+        {
+            _searcher = new DirectorySearcher(searchRoot);
+            InitializeSources();
+        }
+
+        /// <summary>
+        /// Creates a new data source instance based on the given DirectorySearcher.
+        /// </summary>
+        /// <param name="searcher">DirectorySearcher object to use for directory searches.</param>
+        public DirectoryContext(DirectorySearcher searcher)
+        {
+            _searcher = searcher;
+            InitializeSources();
+        }
+
+        #endregion
+
+        #region Properties
+
+        /// <summary>
+        /// Used to configure a logger to print diagnostic information about the query performed.
+        /// </summary>
+        public TextWriter Log { get; set; }
+
+        /// <summary>
+        /// Searcher object.
+        /// </summary>
+        public DirectorySearcher Searcher { get { return _searcher; } }
+
+        #endregion
+
+        #region Methods
+
+        /// <summary>
+        /// Gets the DirectorySource for the given entity type.
+        /// </summary>
+        /// <typeparam name="T">Entity type.</typeparam>
+        /// <param name="scope">Search scope.</param>
+        /// <returns>DirectorySource for the given entity type.</returns>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1004:GenericMethodsShouldProvideTypeParameter")]
+        public DirectorySource<T> GetSource<T>(SearchScope scope)
+        {
+            return new DirectorySource<T>(this, scope);
+        }
+
+        /// <summary>
+        /// Updates all data sources captured by the context object recursively (including nested contexts).
+        /// </summary>
+        public void Update()
+        {
+            foreach (PropertyInfo property in this.GetType().GetProperties())
+            {
+                if (typeof(IDirectorySource).IsAssignableFrom(property.PropertyType))
+                {
+                    ((IDirectorySource)property.GetValue(this, null)).Update();
+                }
+                else if (typeof(DirectoryContext).IsAssignableFrom(property.PropertyType))
+                {
+                    ((DirectoryContext)property.GetValue(this, null)).Update();
+                }
+            }
+        }
+
+        #endregion
+
+        #region Helper methods
+
+        /// <summary>
+        /// Helper method to initialize data sources.
+        /// </summary>
+        private void InitializeSources()
+        {
+            MethodInfo getSource = this.GetType().GetMethod("GetSource");
+
+            foreach (PropertyInfo property in this.GetType().GetProperties())
+            {
+                if (property.PropertyType.IsGenericType && property.PropertyType.GetGenericTypeDefinition() == typeof(DirectorySource<>))
+                {
+                    var searchOptions = property.GetCustomAttributes(typeof(DirectorySearchOptionsAttribute), true).Cast<DirectorySearchOptionsAttribute>().FirstOrDefault();
+                    SearchScope scope = searchOptions != null ? searchOptions.Scope : SearchScope.Base;
+
+                    Type entity = property.PropertyType.GetGenericArguments()[0];
+                    property.SetValue(this, getSource.MakeGenericMethod(entity).Invoke(this, new object[] { scope }), null);
+                }
+                else if (typeof(DirectoryContext).IsAssignableFrom(property.PropertyType))
+                {
+                    var searchPath = property.GetCustomAttributes(typeof(DirectorySearchPathAttribute), true).Cast<DirectorySearchPathAttribute>().FirstOrDefault();
+
+                    DirectoryEntry searchRoot = _searcher.SearchRoot;
+                    if (searchPath != null && !string.IsNullOrEmpty(searchPath.Path))
+                    {
+                        try
+                        {
+                            searchRoot = _searcher.SearchRoot.Children.Find(searchPath.Path);
+                        }
+                        catch (DirectoryServicesCOMException ex)
+                        {
+                            throw new InvalidOperationException("Failed to retrieve nested context " + property.Name + " with search path " + searchPath.Path + ".", ex);
+                        }
+                    }
+
+                    Type subContext = property.PropertyType;
+                    ConstructorInfo ctor = subContext.GetConstructor(new Type[] { typeof(DirectoryEntry) });
+                    if (ctor == null)
+                        throw new InvalidOperationException("Nested context " + property.Name + " does not have a suitable constructor.");
+
+                    property.SetValue(this, ctor.Invoke(new object[] { searchRoot }), null);
+                }
+            }
+        }
+
+        #endregion
+
+        #region IDisposable Members
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                if (_searcher != null)
+                {
+                    _searcher.Dispose();
+                    _searcher = null;
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        #endregion
+    }
+
+    internal static class Helpers
+    {
+        /// <summary>
+        /// Helper method to clone a DirectorySearcher object and apply the specified filter and properties.
+        /// </summary>
+        /// <param name="searcher">DirectorySearcher object to clone.</param>
+        /// <param name="filter">Search filter.</param>
+        /// <param name="properties">Properties to load.</param>
+        /// <returns>Cloned DirectorySearcher object with applied filter and properties.</returns>
+        public static DirectorySearcher CloneSearcher(DirectorySearcher searcher, string filter, string[] properties)
+        {
+            DirectorySearcher result = new DirectorySearcher()
+            {
+                Asynchronous = searcher.Asynchronous,
+                AttributeScopeQuery = searcher.AttributeScopeQuery,
+                CacheResults = searcher.CacheResults,
+                ClientTimeout = searcher.ClientTimeout,
+                DerefAlias = searcher.DerefAlias,
+                DirectorySynchronization = searcher.DirectorySynchronization,
+                ExtendedDN = searcher.ExtendedDN,
+                PageSize = searcher.PageSize,
+                PropertyNamesOnly = searcher.PropertyNamesOnly,
+                ReferralChasing = searcher.ReferralChasing,
+                SearchRoot = searcher.SearchRoot,
+                SearchScope = searcher.SearchScope,
+                SecurityMasks = searcher.SecurityMasks,
+                ServerPageTimeLimit = searcher.ServerPageTimeLimit,
+                ServerTimeLimit = searcher.ServerTimeLimit,
+                SizeLimit = searcher.SizeLimit,
+                Tombstone = searcher.Tombstone,
+                VirtualListView = searcher.VirtualListView
+            };
+
+            result.Filter = filter;
+            if (!string.IsNullOrEmpty(filter) && !string.IsNullOrEmpty(searcher.Filter) && searcher.Filter != "(objectClass=*)")
+            {
+                result.Filter = string.Format(CultureInfo.InvariantCulture, "(&{0}{1})", searcher.Filter, filter);
+            }
+
+            foreach (var property in searcher.PropertiesToLoad)
+                result.PropertiesToLoad.Add(property);
+
+            if (properties != null)
+                result.PropertiesToLoad.AddRange(properties);
+
+            return result;
+        }
     }
 }

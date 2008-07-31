@@ -13,14 +13,47 @@
 using System;
 using ActiveDs;
 using BdsSoft.DirectoryServices.Linq;
+using System.DirectoryServices;
 
 #endregion
 
 namespace Demo
 {
+    sealed class MyContext : DirectoryContext
+    {
+        public MyContext(DirectoryEntry searchRoot)
+            : base(searchRoot)
+        {
+        }
+
+        [DirectorySearchOptions(SearchScope.Subtree)]
+        public DirectorySource<User>  Users  { get; set; }
+
+        [DirectorySearchOptions(SearchScope.Subtree)]
+        public DirectorySource<Group> Groups { get; set; }
+
+#if !NOTESTOU
+        [DirectorySearchPath("OU=Demo")]
+        public MyDemoContext          Demo   { get; set; }
+#endif
+    }
+
+    sealed class MyDemoContext : DirectoryContext
+    {
+        public MyDemoContext(DirectoryEntry searchRoot)
+            : base(searchRoot)
+        {
+        }
+
+        public DirectorySource<MyUser> Users  { get; set; }
+    }
+
     [DirectorySchema("user", typeof(IADsUser))]
     class User
     {
+        [DirectoryAttribute("objectGUID")]
+        public Guid Id { get; set; }
+
         public string Name { get; set; }
 
         public string Description { get; set; }
@@ -113,17 +146,17 @@ namespace Demo
             }
         }
 
-        private string accoutName;
+        private string accountName;
 
         [DirectoryAttribute("sAMAccountName")]
         public string AccountName
         {
-            get { return accoutName; }
+            get { return accountName; }
             set
             {
-                if (accoutName != value)
+                if (accountName != value)
                 {
-                    accoutName = value;
+                    accountName = value;
                     OnPropertyChanged("AccountName");
                 }
             }

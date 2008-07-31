@@ -11,6 +11,7 @@
 #region Namespace imports
 
 using System;
+using System.DirectoryServices;
 
 #endregion
 
@@ -105,6 +106,64 @@ namespace BdsSoft.DirectoryServices.Linq
         /// Type of the underlying query source to get the attribute from.
         /// </summary>
         public DirectoryAttributeType QuerySource { get; set; }
+
+        #endregion
+    }
+
+    /// <summary>
+    /// Specifies additional search options.
+    /// </summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1019:DefineAccessorsForAttributeArguments"), AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
+    public sealed class DirectorySearchOptionsAttribute : Attribute
+    {
+        #region Constructors
+
+        /// <summary>
+        /// Creates a new search options attribute.
+        /// </summary>
+        /// <param name="scope">Search scope.</param>
+        public DirectorySearchOptionsAttribute(SearchScope scope)
+        {
+            Scope = scope;
+        }
+
+        #endregion
+
+        #region Properties
+
+        /// <summary>
+        /// Search scope.
+        /// </summary>
+        public SearchScope Scope { get; private set; }
+
+        #endregion
+    }
+
+    /// <summary>
+    /// Specifies a search path for nested contexts.
+    /// </summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1019:DefineAccessorsForAttributeArguments"), AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
+    public sealed class DirectorySearchPathAttribute : Attribute
+    {
+        #region Constructors
+
+        /// <summary>
+        /// Creates a new search path attribute.
+        /// </summary>
+        /// <param name="path">Relative search path.</param>
+        public DirectorySearchPathAttribute(string path)
+        {
+            Path = path;
+        }
+
+        #endregion
+
+        #region Properties
+
+        /// <summary>
+        /// Relative search path.
+        /// </summary>
+        public string Path { get; private set; }
 
         #endregion
     }
